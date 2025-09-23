@@ -6,20 +6,19 @@ const AiIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6"
 const FeedbackIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>;
 const SummaryIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
 
-
 export default function InterviewChat() {
   // --- State Management ---
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState(null);
   const [interviewType, setInterviewType] = useState("HR");
-  const [maxQuestions, setMaxQuestions] = useState(3); // ✨ NEW: State for interview length
-  const [isLoading, setIsLoading] = useState(false);   // ✨ NEW: Loading state for UI feedback
+  const [maxQuestions, setMaxQuestions] = useState(3);
+  const [isLoading, setIsLoading] = useState(false);
   const [started, setStarted] = useState(false);
   const [finished, setFinished] = useState(false);
-  
+
   const chatRef = useRef(null);
-  const name = "Abhilash"; // Hardcoded for this example
+  const name = "Abhilash";
 
   // --- Effects ---
   useEffect(() => {
@@ -36,7 +35,6 @@ export default function InterviewChat() {
       const res = await fetch("http://localhost:5000/api/interview/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // 🔧 UPDATED: Send max_questions to the backend
         body: JSON.stringify({ name, interview_type: interviewType, max_questions: maxQuestions }),
       });
 
@@ -74,12 +72,13 @@ export default function InterviewChat() {
       const data = await res.json();
       let newMessages = [];
 
+      // 🔄 Now that the backend returns structured JSON, we can use it directly
       if (data.feedback) {
-        newMessages.push({ type: "feedback", text: data.feedback });
+        newMessages.push({ type: "feedback", data: data.feedback });
       }
 
       if (data.summary) {
-        newMessages.push({ type: "summary", text: data.summary });
+        newMessages.push({ type: "summary", data: data.summary });
         setFinished(true);
       } else if (data.current_question) {
         newMessages.push({ type: "question", text: data.current_question });
@@ -107,11 +106,48 @@ export default function InterviewChat() {
 
     const { container, bubble, icon } = messageStyles[msg.type] || messageStyles.question;
 
+    const renderContent = () => {
+        // 🔄 Renders the structured data from the API response
+        if (msg.type === "feedback" || msg.type === "summary") {
+            const title = msg.type === "feedback" ? "Feedback:" : "Final Summary:";
+            const strengthsTitle = "Strengths:";
+            const improvementsTitle = "Areas for Improvement:";
+
+            return (
+                <div className="p-4 space-y-2">
+                    <p className="font-bold">{title}</p>
+                    {msg.data.strengths && msg.data.strengths.length > 0 && (
+                        <div className="space-y-1">
+                            <p className="font-semibold">{strengthsTitle}</p>
+                            <ul className="list-disc list-inside space-y-0.5">
+                                {msg.data.strengths.map((point, i) => (
+                                    <li key={i}>{point}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                    {msg.data.areas_for_improvement && msg.data.areas_for_improvement.length > 0 && (
+                        <div className="space-y-1">
+                            <p className="font-semibold">{improvementsTitle}</p>
+                            <ul className="list-disc list-inside space-y-0.5">
+                                {msg.data.areas_for_improvement.map((point, i) => (
+                                    <li key={i}>{point}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+        // 🔄 Renders plain text messages (questions, user answers, errors)
+        return <p className="whitespace-pre-wrap">{msg.text}</p>;
+    };
+
     return (
         <div key={idx} className={`flex items-end gap-2 ${container}`}>
             {msg.type !== "user" && <div className="flex-shrink-0">{icon}</div>}
-            <div className={`p-3 rounded-lg max-w-md whitespace-pre-wrap ${bubble}`}>
-                {msg.text}
+            <div className={`rounded-lg max-w-md ${bubble}`}>
+                {renderContent()}
             </div>
             {msg.type === "user" && <div className="flex-shrink-0">{icon}</div>}
         </div>

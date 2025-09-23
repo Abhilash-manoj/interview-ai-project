@@ -1,6 +1,8 @@
 import uuid
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from models import Feedback
+from typing import List, TypedDict, Annotated, Optional
 
 # Assume your models.py and aiservices.py are in the same directory
 # 🔧 1. Define Pydantic models directly here for clarity
@@ -14,17 +16,19 @@ class StartInterviewResponse(BaseModel):
     name: str
     current_question: str
 
-class AnswerRequest(BaseModel):
-    session_id: str
-    latest_answer: str
+# ⚠️ Updated Pydantic models to match the new structured output
 
 class AnswerResponse(BaseModel):
     session_id: str
     name: str | None = None
     current_question: str | None = None
-    feedback: str | None = None
-    summary: str | None = None
+    feedback: Optional[Feedback] = None
+    summary: Optional[Feedback] = None
     question_count: int
+
+class AnswerRequest(BaseModel):
+    session_id: str
+    latest_answer: str
 
 # 🔧 2. Import the compiled graph objects from your services file
 from aiservices import start_graph, continue_graph
@@ -87,15 +91,16 @@ def answer(req: AnswerRequest):
     sessions[req.session_id] = new_state
     print(f"🔄 Session updated: {req.session_id}")
 
-    # 🔧 Get the most recent feedback from the feedback list
+    # ⚠️ Now we directly access the structured feedback and summary objects
     latest_feedback = new_state["feedback"][-1] if new_state.get("feedback") else None
+    final_summary = new_state.get("summary")
 
     response = AnswerResponse(
         session_id=req.session_id,
         name=new_state.get("name"),
         current_question=new_state.get("current_question"),
-        feedback=latest_feedback, # Use the latest feedback item
-        summary=new_state.get("summary"),
+        feedback=latest_feedback, 
+        summary=final_summary,
         question_count=new_state.get("question_count", 0)
     )
     print("🔧 Returning AnswerResponse:", response.dict())
