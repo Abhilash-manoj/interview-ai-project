@@ -42,8 +42,8 @@ const limiter = rateLimit({
 app.use("/api/interview", limiter);
 
 // --- Body parser with size limits (OWASP: Input Validation)
-app.use(express.json({ limit: "200kb" }));
-app.use(express.urlencoded({ extended: false, limit: "200kb" }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // --- Compression & logging
 app.use(compression());

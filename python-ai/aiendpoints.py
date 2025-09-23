@@ -1,78 +1,106 @@
 import uuid
-from typing import Optional
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from models import StartRequest, AnswerRequest, QuestionResponse
-from aiservices import build_graph
+from pydantic import BaseModel
 
-app = FastAPI()
+# Assume your models.py and aiservices.py are in the same directory
+# 🔧 1. Define Pydantic models directly here for clarity
+class StartInterviewRequest(BaseModel):
+    name: str
+    interview_type: str
+    max_questions: int = 3 # 🔧 Add max_questions to the request
 
+class StartInterviewResponse(BaseModel):
+    session_id: str
+    name: str
+    current_question: str
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+class AnswerRequest(BaseModel):
+    session_id: str
+    latest_answer: str
+
+class AnswerResponse(BaseModel):
+    session_id: str
+    name: str | None = None
+    current_question: str | None = None
+    feedback: str | None = None
+    summary: str | None = None
+    question_count: int
+
+# 🔧 2. Import the compiled graph objects from your services file
+from aiservices import start_graph, continue_graph
+
+app = FastAPI(
+    title="Mock Interview AI Agent",
+    description="API for conducting a mock interview with a LangGraph-powered agent."
 )
 
+# In-memory session storage (for demonstration purposes)
 sessions = {}
 
-graph_instance = build_graph()
-# -------------------- FastAPI Endpoints --------------------
-@app.post("/start", response_model=QuestionResponse)
-def start_interview_endpoint(req: StartRequest):
-    session_id = str(uuid.uuid4())
-
-    # Pass inputs inside the state dictionary
+# -------------------------------------------------------------
+# 🔧 3. Update the /start endpoint
+# -------------------------------------------------------------
+@app.post("/start", response_model=StartInterviewResponse)
+def start(req: StartInterviewRequest):
+    """Initializes a new interview session."""
+    # Create the initial state from the request
     initial_state = {
         "name": req.name,
         "interview_type": req.interview_type,
-        "question_count": 0,
-        "answers": [],
-        "feedback": [],
-        "current_question": "",
-        "latest_answer": "",
-        "summary": ""
+        "max_questions": req.max_questions
     }
 
-    # Invoke nodes
-    state = graph_instance.invoke(initial_state)
+    # 🔧 Use the new start_graph to initialize the state and get the first question
+    final_state = start_graph.invoke(initial_state)
 
-    # Save session
-    sessions[session_id] = state
+    # Generate a unique session ID and store the state
+    session_id = str(uuid.uuid4())
+    sessions[session_id] = final_state
+    print(f"✅ Session started: {session_id} for user {req.name}")
 
-    return QuestionResponse(
+    response = StartInterviewResponse(
         session_id=session_id,
-        question=state["current_question"]
+        name=req.name,
+        current_question=final_state["current_question"]
     )
+    print("🔧 Returning StartInterviewResponse:", response.dict())
+    return response
 
-@app.post("/answer", response_model=QuestionResponse)
-def answer_endpoint(req: AnswerRequest):
-    if req.session_id not in sessions:
+# -------------------------------------------------------------
+# 🔧 4. Update the /answer endpoint
+# -------------------------------------------------------------
+@app.post("/answer", response_model=AnswerResponse)
+def answer(req: AnswerRequest):
+    """Processes a user's answer and gets the next question or summary."""
+    # Retrieve the current state for the session
+    current_state = sessions.get(req.session_id)
+    if not current_state:
         raise HTTPException(status_code=404, detail="Session not found")
-    
-    state = sessions[req.session_id]
 
-    # Add the user's answer to the state dict
-    state["latest_answer"] = req.answer
+    # Update the state with the user's latest answer
+    current_state["latest_answer"] = req.latest_answer
 
-    # Invoke the nodes in order
-    state = graph_instance.invoke(state)
+    # 🔧 Use the new continue_graph for the main conversational loop
+    new_state = continue_graph.invoke(current_state)
 
-    # Check if interview finished
-    if state.get("__branch__") == "summary":
-        state = graph_instance.invoke(state)
-        sessions.pop(req.session_id)
-        return QuestionResponse(
-            session_id=req.session_id,
-            question="Interview Finished",
-            summary=state.get("summary")
-        )
+    # Save the updated state back into the session storage
+    sessions[req.session_id] = new_state
+    print(f"🔄 Session updated: {req.session_id}")
 
-    # Update session
-    sessions[req.session_id] = state
+    # 🔧 Get the most recent feedback from the feedback list
+    latest_feedback = new_state["feedback"][-1] if new_state.get("feedback") else None
 
-    return QuestionResponse(
+    response = AnswerResponse(
         session_id=req.session_id,
-        question=state["current_question"],
-        feedback=state.get("feedback", [])[-1] if state.get("feedback") else None
+        name=new_state.get("name"),
+        current_question=new_state.get("current_question"),
+        feedback=latest_feedback, # Use the latest feedback item
+        summary=new_state.get("summary"),
+        question_count=new_state.get("question_count", 0)
     )
+    print("🔧 Returning AnswerResponse:", response.dict())
+    return response
+
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to the Mock Interview AI Agent API"}

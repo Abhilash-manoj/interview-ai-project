@@ -1,37 +1,57 @@
+// routes/interview.js
 import express from "express";
-import axios from "axios";
+import { startInterview, submitAnswer } from "../controllers/interviewController.js";
 
 const router = express.Router();
 
-// Point this to FastAPI backend
-const AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://127.0.0.1:8000";
-
-// ✅ Start interview
+// POST /api/interview/start
 router.post("/start", async (req, res) => {
   try {
-    console.log("📤 Sending to FastAPI /start:", req.body);
-    const response = await axios.post(`${AI_SERVICE_URL}/start`, req.body);
-    console.log("✅ Response from FastAPI /start:", response.data);
-    res.json(response.data);
+    console.log("Received /start request with body:", req.body);
+    // 🔧 1. Destructure max_questions from the request body
+    const { name, interview_type, max_questions } = req.body;
+
+    // 🔧 2. Add max_questions to the validation check
+    if (!name || !interview_type || !max_questions) {
+      return res.status(400).json({ error: "Missing name, interview_type, or max_questions" });
+    }
+
+    // 🔧 3. Pass max_questions to the controller function
+    const data = await startInterview(name, interview_type, max_questions);
+    
+    console.log("Routers:", data);
+    res.json(data); // { session_id, name, current_question }
   } catch (err) {
-    console.error("❌ FastAPI /start error:", err.response?.data || err.message);
-    res
-      .status(err.response?.status || 500)
-      .json(err.response?.data || { error: "start failed" });
+      console.error("🔥 Error in /start route:", {
+        message: err.message,
+        code: err.code,
+        request_config: err.config,
+      });
+      res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-// ✅ Submit answer
+// POST /api/interview/answer (NO CHANGES NEEDED HERE)
 router.post("/answer", async (req, res) => {
   try {
-    console.log("📤 Sending to FastAPI /answer:", req.body);
-    const response = await axios.post(`${AI_SERVICE_URL}/answer`, req.body);
-    console.log("✅ Response from FastAPI /answer:", response.data);
-    res.json(response.data);
+    console.log("Received /answer request with body:", req.body);
+    const { session_id, latest_answer } = req.body;
+
+    if (!session_id || !latest_answer) {
+      return res.status(400).json({ error: "Missing session_id or answer" });
+    }
+
+    const data = await submitAnswer(session_id, latest_answer);
+    console.log("Routers:", data);
+    res.json(data);
   } catch (err) {
-    console.error("❌ FastAPI /answer error:", err.response?.data || err.message);
-    res
-      .status(err.response?.status || 500)
-      .json(err.response?.data || { error: "answer failed" });
+        console.error("🔥 Error in /answer route:", {
+        message: err.message,
+        code: err.code,
+        request_config: err.config,
+      });
+      res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
+export default router;

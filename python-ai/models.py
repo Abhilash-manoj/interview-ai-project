@@ -1,20 +1,25 @@
-from fastapi import FastAPI
 from pydantic import BaseModel
+from typing import Optional
 
-app = FastAPI()
-
-# Store ongoing sessions in memory (or use DB like MongoDB)
-sessions = {}
-class StartRequest(BaseModel):
+class StartInterviewRequest(BaseModel):
     name: str
-    interview_type: str  # HR, Technical, Behavioral
+    interview_type: str
+
+class StartInterviewResponse(BaseModel):
+    session_id: str
+    name: str
+    current_question: str
 
 class AnswerRequest(BaseModel):
     session_id: str
-    answer: str
+    latest_answer: str
 
-class QuestionResponse(BaseModel):
+class AnswerResponse(BaseModel):
     session_id: str
-    question: str
-    feedback: str | None = None
-    summary: str | None = None
+    name: str
+    current_question: Optional[str] = None
+    feedback: Optional[str] = None
+    summary: Optional[str] = None
+    question_count: int
+
+    

@@ -4,67 +4,62 @@ function makeClient() {
   const url = process.env.AI_SERVICE_URL;
   console.log("🌍 Using AI_SERVICE_URL:", url);
 
-  if (!url) {
-    throw new Error("AI_SERVICE_URL is not set in .env");
-  }
+  if (!url) throw new Error("AI_SERVICE_URL is not set in .env");
 
   return axios.create({
     baseURL: url,
-    timeout: 15000, // OWASP: avoid hanging
-    validateStatus: (s) => s >= 200 && s < 500
+    timeout: 60000,
+    validateStatus: (s) => s >= 200 && s < 500,
   });
 }
 
-export const startInterview = async (req, res) => {
-  try {
-    const { name, interview_type } = req.body;
-
-    const client = makeClient();
-    const py = await client.post(
-      "/start",
-      { name, interview_type },
-      {
-        headers: {
-          "X-API-Key": process.env.FASTAPI_INTERNAL_KEY || "",
-          "Content-Type": "application/json"
-        }
-      }
-    );
-
-    if (py.status !== 200) {
-      console.error("FastAPI /start error:", py.data);
-      return res.status(py.status).json(py.data); // forward actual error
+// ✅ Start Interview
+// 🔧 1. Add `max_questions` parameter with a default value
+export const startInterview = async (name, interview_type, max_questions = 3) => {
+  const client = makeClient();
+  const py = await client.post(
+    "/start",
+    // 🔧 2. Include `max_questions` in the request payload
+    { name, interview_type, max_questions },
+    {
+      headers: {
+        "X-API-Key": process.env.FASTAPI_INTERNAL_KEY || "",
+        "Content-Type": "application/json",
+      },
     }
-    return res.json(py.data);
-  } catch (e) {
-    console.error("startInterview failed:", e.message);
-    return res.status(500).json({ error: "Failed to start interview" });
-  }
+  );
+  console.log("Received Content:", py.data);
+  return py.data; // { session_id, name, current_question }
 };
 
-export const submitAnswer = async (req, res) => {
-  try {
-    const { session_id, answer } = req.body;
-
-    const client = makeClient();
-    const py = await client.post(
-      "/answer",
-      { session_id, answer },
-      {
-        headers: {
-          "X-API-Key": process.env.FASTAPI_INTERNAL_KEY || "",
-          "Content-Type": "application/json"
-        }
-      }
-    );
-
-    if (py.status !== 200) {
-      console.error("FastAPI /answer error:", py.data);
-      return res.status(py.status).json(py.data);
-    }
-    return res.json(py.data);
-  } catch (e) {
-    console.error("submitAnswer failed:", e.message);
-    return res.status(500).json({ error: "Failed to submit answer" });
+// ✅ Submit Answer
+export const submitAnswer = async (session_id, latest_answer) => {
+  // 🔧 3. Fix the typo in the validation check
+  if (!session_id || !latest_answer) {
+    throw new Error("Missing session_id or latest_answer");
   }
+
+  const client = makeClient();
+  const py = await client.post(
+    "/answer",
+    { session_id, latest_answer },
+    {
+      headers: {
+        "X-API-Key": process.env.FASTAPI_INTERNAL_KEY || "",
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  console.log("Received Content:", py.data);
+  return py.data;
+  /*
+    {
+      session_id,
+      name,
+      current_question,
+      feedback,
+      summary,
+      question_count
+    }
+  */
 };
