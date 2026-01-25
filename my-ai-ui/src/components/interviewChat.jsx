@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import Navbar from "./Navbar";
 
 // --- Icons ---
@@ -19,17 +21,16 @@ export default function InterviewChat() {
   const [isLoading, setIsLoading] = useState(false);
   const [started, setStarted] = useState(false);
   const [finished, setFinished] = useState(false);
-  const [userName, setUserName] = useState("Candidate"); 
+  const [userName, setUserName] = useState("Candidate");
 
   const chatRef = useRef(null);
 
-  // --- 🔒 Security: Check Token and Name on Load/Refresh ---
+  // --- Security: Session Check ---
   useEffect(() => {
     const validateSession = async () => {
       const token = localStorage.getItem("token");
       const savedName = localStorage.getItem("userName");
 
-      // ✅ Robust check for missing or "null" string tokens to prevent 'malformed' error
       if (!token || token === "null" || token === "undefined") {
         window.location.href = "/signin";
         return;
@@ -43,8 +44,6 @@ export default function InterviewChat() {
         });
 
         const data = await res.json();
-
-        // ✅ Safely handle null user data to prevent 'reading name of null' error
         if (!res.ok || !data?.user?.name) {
           handleLogout();
         } else {
@@ -65,7 +64,6 @@ export default function InterviewChat() {
     }
   }, [messages, isLoading]);
 
-  // --- 🚪 Logout Function ---
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("userName");
@@ -73,6 +71,18 @@ export default function InterviewChat() {
   };
 
   // --- API Functions ---
+  const processAIResponse = (data) => {
+    let newMessages = [];
+    if (data.feedback) newMessages.push({ type: "feedback", data: data.feedback });
+    if (data.summary) {
+      newMessages.push({ type: "summary", data: data.summary });
+      setFinished(true);
+    } else if (data.current_question) {
+      newMessages.push({ type: "question", text: data.current_question });
+    }
+    setMessages(prev => [...prev, ...newMessages]);
+  };
+
   const startInterview = async () => {
     setIsLoading(true);
     setMessages([]);
@@ -83,10 +93,7 @@ export default function InterviewChat() {
       formData.append("name", userName); 
       formData.append("interview_type", interviewType);
       formData.append("max_questions", maxQuestions);
-      
-      if (resumeFile) {
-        formData.append("resume", resumeFile);
-      }
+      if (resumeFile) formData.append("resume", resumeFile);
 
       const res = await fetch("http://localhost:5000/api/interview/start", {
         method: "POST",
@@ -94,20 +101,13 @@ export default function InterviewChat() {
         body: formData,
       });
 
-      if (res.status === 401) {
-        handleLogout();
-        return;
-      }
-
-      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-
+      if (res.status === 401) return handleLogout();
       const data = await res.json();
       setSessionId(data.session_id);
       setMessages([{ type: "question", text: data.current_question }]);
       setStarted(true);
     } catch (err) {
-      console.error("Error starting interview:", err);
-      setMessages([{ type: "error", text: "⚠️ Failed to start session." }]);
+      console.error("Start error", err);
     } finally {
       setIsLoading(false);
     }
@@ -132,29 +132,11 @@ export default function InterviewChat() {
         body: JSON.stringify({ session_id: sessionId, latest_answer: answerText }),
       });
 
-      if (res.status === 401) {
-        handleLogout();
-        return;
-      }
-
-      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-      
+      if (res.status === 401) return handleLogout();
       const data = await res.json();
-      let newMessages = [];
-
-      if (data.feedback) newMessages.push({ type: "feedback", data: data.feedback });
-
-      if (data.summary) {
-        newMessages.push({ type: "summary", data: data.summary });
-        setFinished(true);
-      } else if (data.current_question) {
-        newMessages.push({ type: "question", text: data.current_question });
-      }
-      
-      setMessages(prev => [...prev, ...newMessages]);
+      processAIResponse(data);
     } catch (err) {
-      console.error("Error sending answer:", err);
-      setMessages(prev => [...prev, { type: "error", text: "⚠️ Failed to send answer." }]);
+      console.error("Answer error", err);
     } finally {
       setIsLoading(false);
     }
@@ -165,9 +147,8 @@ export default function InterviewChat() {
     const messageStyles = {
         user: { container: "justify-end", bubble: "bg-blue-600 text-white", icon: <UserIcon /> },
         question: { container: "justify-start", bubble: "bg-gray-100 text-gray-800", icon: <AiIcon /> },
-        feedback: { container: "justify-start", bubble: "bg-amber-50 border border-amber-200 text-amber-900", icon: <FeedbackIcon /> },
-        summary: { container: "justify-start", bubble: "bg-emerald-50 border border-emerald-200 text-emerald-900 w-full", icon: <SummaryIcon /> },
-        error: { container: "justify-start", bubble: "bg-red-50 text-red-700", icon: <AiIcon /> }
+        feedback: { container: "justify-start", bubble: "bg-white border border-gray-200 text-gray-800 w-full", icon: <FeedbackIcon /> },
+        summary: { container: "justify-start", bubble: "bg-white border border-gray-200 text-gray-900 w-full", icon: <SummaryIcon /> }
     };
 
     const { container, bubble, icon } = messageStyles[msg.type] || messageStyles.question;
@@ -176,154 +157,148 @@ export default function InterviewChat() {
         if (msg.type === "feedback" || msg.type === "summary") {
             const isSummary = msg.type === "summary";
             const d = msg.data;
-            
-            const getScoreColor = (score) => {
-                if (score <= 1) return "bg-red-600 text-white";
-                if (score <= 3) return "bg-amber-500 text-white";
-                return "bg-emerald-600 text-white";
-            };
+            const getScoreColor = (s) => s <= 1 ? "bg-red-600 text-white" : s <= 3 ? "bg-amber-500 text-white" : "bg-emerald-600 text-white";
 
             return (
-                <div className="p-4 space-y-4 border-l-4 border-gray-800 bg-gray-50 shadow-inner">
-                    <p className="font-black uppercase tracking-tighter text-xl text-gray-900">
-                        {isSummary ? "Final Audit Report" : "Interviewer Evaluation"}
+                <div className="p-6 space-y-4 border-l-8 border-gray-900 rounded-r-xl shadow-md">
+                    <p className="font-black uppercase tracking-widest text-xl text-gray-900 border-b pb-2">
+                        {isSummary ? "🏆 Final Audit Report" : "🧐 Interviewer Evaluation"}
                     </p>
-
+                    
                     {isSummary && (
                         <div className="flex gap-4">
-                            <div className={`px-4 py-2 rounded shadow-md font-black ${getScoreColor(d.interview_score)}`}>
-                                FINAL INTV: {d.interview_score}/5
-                            </div>
-                            <div className={`px-4 py-2 rounded shadow-md font-black ${getScoreColor(d.resume_score)}`}>
-                                RESUME: {d.resume_score}/5
-                            </div>
+                            <div className={`px-4 py-2 rounded-lg shadow-sm font-black ${getScoreColor(d.interview_score)}`}>INTERVIEW: {d.interview_score}/5</div>
+                            <div className={`px-4 py-2 rounded-lg shadow-sm font-black ${getScoreColor(d.resume_score)}`}>RESUME: {d.resume_score}/5</div>
                         </div>
                     )}
 
-                    <div className="text-sm leading-relaxed space-y-4 text-gray-800">
-                        <p>
-                            <span className="font-bold uppercase block text-[10px] text-gray-500 mb-1">
-                                {isSummary ? "Executive Summary" : "Response Critique"}
-                            </span> 
+                    <div className="prose prose-sm max-w-none text-gray-800 leading-relaxed">
+                        <span className="font-bold uppercase block text-[10px] text-gray-400 mb-2">
+                            {isSummary ? "Executive Summary" : "Response Critique"}
+                        </span> 
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
                             {isSummary ? d.overall_performance : d.assessment}
-                        </p>
+                        </ReactMarkdown>
                         
                         {isSummary && (
                             <>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                    <div className="p-3 bg-white border border-gray-200 rounded text-xs">
-                                        <span className="font-bold uppercase block text-emerald-700 mb-1">Interview Coaching</span>
-                                        {d.interview_coaching}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+                                    <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-xl">
+                                        <span className="font-bold uppercase block text-emerald-700 text-[10px] mb-2">Interview Coaching</span>
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{d.interview_coaching}</ReactMarkdown>
                                     </div>
-                                    <div className="p-3 bg-white border border-gray-200 rounded text-xs">
-                                        <span className="font-bold uppercase block text-red-700 mb-1">Resume Audit</span>
-                                        {d.resume_coaching}
+                                    <div className="p-4 bg-red-50 border border-red-100 rounded-xl">
+                                        <span className="font-bold uppercase block text-red-700 text-[10px] mb-2">Resume Audit</span>
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{d.resume_coaching}</ReactMarkdown>
                                     </div>
                                 </div>
-                                <p className="text-center font-black text-3xl uppercase border-t border-gray-200 pt-4 mt-4">
-                                    Verdict: <span className={d.hiring_verdict === 'REJECTED' ? 'text-red-600' : 'text-emerald-600'}>{d.hiring_verdict}</span>
-                                </p>
+                                <div className="text-center pt-8 border-t mt-6">
+                                    <span className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-2">Hiring Verdict</span>
+                                    <p className={`text-4xl font-black italic uppercase ${d.hiring_verdict === 'REJECTED' ? 'text-red-600' : 'text-emerald-600'}`}>
+                                        {d.hiring_verdict}
+                                    </p>
+                                </div>
                             </>
                         )}
                     </div>
                 </div>
             );
         }
-        return <p className="p-3 whitespace-pre-wrap">{msg.text}</p>;
+
+        return (
+            <div className={`p-4 prose prose-sm max-w-none ${msg.type === "user" ? "prose-invert" : ""}`}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {msg.text}
+                </ReactMarkdown>
+            </div>
+        );
     };
 
     return (
-        <div key={idx} className={`flex items-end gap-2 mb-4 ${container}`}>
-            {msg.type !== "user" && <div className="mb-1">{icon}</div>}
-            <div className={`rounded-2xl max-w-[80%] shadow-sm ${bubble}`}>{renderContent()}</div>
-            {msg.type === "user" && <div className="mb-1">{icon}</div>}
+        <div key={idx} className={`flex items-start gap-3 mb-6 ${container}`}>
+            {msg.type !== "user" && <div className="mt-2">{icon}</div>}
+            <div className={`rounded-2xl max-w-[85%] shadow-sm ${bubble}`}>{renderContent()}</div>
+            {msg.type === "user" && <div className="mt-2">{icon}</div>}
         </div>
     );
   };
 
   return (
-    <div className="flex flex-col w-full max-w-4xl mx-auto h-[90vh] my-4 border rounded-2xl shadow-xl bg-white overflow-hidden border-gray-100">
+    <div className="flex flex-col w-full max-w-5xl mx-auto h-[92vh] my-4 border rounded-3xl shadow-2xl bg-white overflow-hidden border-gray-100">
       <Navbar userName={userName} />
       {!started ? (
-        <div className="flex flex-col items-center justify-center h-full p-8 space-y-8 bg-gradient-to-b from-blue-50 to-white">
-          <div className="text-center space-y-2">
-            <h1 className="text-4xl font-extrabold text-gray-900">AI Interviewer</h1>
-            <p className="text-gray-500">Practice your skills with a professional audit.</p>
+        <div className="flex flex-col items-center justify-center h-full p-8 space-y-10 bg-gradient-to-b from-blue-50 to-white">
+          <div className="text-center space-y-3">
+            <h1 className="text-5xl font-black text-gray-900 tracking-tight">AI Interviewer</h1>
+            <p className="text-gray-500 text-lg">Experience a high-fidelity professional audit.</p>
           </div>
-
-          <div className="w-full max-w-sm space-y-5 bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-gray-400 uppercase">Interview Type</label>
-              <select className="w-full border-2 p-3 rounded-lg focus:border-blue-500 outline-none transition-all" value={interviewType} onChange={(e) => setInterviewType(e.target.value)}>
+          <div className="w-full max-w-md space-y-6 bg-white p-8 rounded-3xl shadow-xl border border-gray-100">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Interview Protocol</label>
+              <select className="w-full border-2 p-3 rounded-xl outline-none focus:border-blue-500 transition-all" value={interviewType} onChange={(e) => setInterviewType(e.target.value)}>
                 <option value="HR">HR / Culture Fit</option>
                 <option value="Technical">Technical / Coding</option>
                 <option value="Behavioral">Behavioral (STAR Method)</option>
               </select>
             </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-gray-400 uppercase">Number of Questions</label>
-              <input type="number" min="1" max="10" className="w-full border-2 p-3 rounded-lg outline-none focus:border-blue-500 transition-all" value={maxQuestions} onChange={(e) => setMaxQuestions(Number(e.target.value))} />
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Session Length</label>
+              <input type="number" min="1" max="10" className="w-full border-2 p-3 rounded-xl outline-none focus:border-blue-500" value={maxQuestions} onChange={(e) => setMaxQuestions(Number(e.target.value))} />
             </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-gray-400 uppercase">Upload Resume (PDF)</label>
-              <div className="relative group">
-                <input type="file" accept=".pdf" onChange={(e) => setResumeFile(e.target.files[0])} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                <div className={`flex items-center gap-3 border-2 border-dashed p-3 rounded-lg transition-all ${resumeFile ? 'border-blue-500 bg-blue-50' : 'border-gray-200 group-hover:border-blue-300'}`}>
-                  <FileIcon />
-                  <span className="text-sm text-gray-600 truncate">{resumeFile ? resumeFile.name : "Select file (optional)"}</span>
-                </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Resume Dossier (PDF)</label>
+              <div className="relative group border-2 border-dashed p-4 rounded-xl text-center cursor-pointer hover:bg-gray-50 transition-all">
+                <input type="file" accept=".pdf" onChange={(e) => setResumeFile(e.target.files[0])} className="absolute inset-0 opacity-0 cursor-pointer" />
+                <span className="text-sm text-gray-600 font-medium truncate block">{resumeFile ? resumeFile.name : "Upload context for AI..."}</span>
               </div>
             </div>
-
-            <button onClick={startInterview} disabled={isLoading} className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-blue-700 disabled:bg-blue-300 transition-all">
-              {isLoading ? "Analyzing..." : "Begin Session"}
+            <button onClick={startInterview} disabled={isLoading} className="w-full bg-gray-900 text-white py-4 rounded-2xl font-black text-xl hover:bg-black transition-all shadow-lg active:scale-95">
+              {isLoading ? "PROVISIONING..." : "BEGIN AUDIT"}
             </button>
           </div>
         </div>
       ) : (
         <>
-          <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
-            <div className="flex items-center gap-2">
-                <div className="h-3 w-3 rounded-full bg-green-500 animate-pulse"></div>
-                <span className="font-bold text-gray-700">Audit for: {userName}</span>
+          <div className="px-6 py-4 border-b bg-white flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <div className="h-3 w-3 rounded-full bg-green-500 animate-pulse"></div>
+              <span className="font-black text-sm text-gray-800 uppercase tracking-widest">{`Session: ${userName}`}</span>
             </div>
-            <div className="flex items-center gap-4">
-              <span className="text-xs font-medium px-2 py-1 bg-blue-100 text-blue-700 rounded-md uppercase">{interviewType}</span>
-              <button 
-                onClick={handleLogout}
-                className="text-xs font-bold text-red-500 hover:text-red-700 uppercase tracking-wider transition-colors"
-              >
-                Logout
-              </button>
-            </div>
+            <span className="text-[10px] font-bold px-3 py-1 bg-gray-100 text-gray-600 rounded-full uppercase">{interviewType}</span>
           </div>
-
-          <div ref={chatRef} className="flex-1 overflow-y-auto p-6 scroll-smooth">
+          
+          <div ref={chatRef} className="flex-1 overflow-y-auto px-8 py-6 space-y-2 scroll-smooth bg-[#fafafa]">
             {messages.map(renderMessage)}
             {isLoading && (
-              <div className="flex gap-2 items-center text-gray-400 italic text-sm ml-8">
-                <div className="flex gap-1">
-                    <div className="w-1.5 h-1.5 bg-gray-300 rounded-full animate-bounce"></div>
-                    <div className="w-1.5 h-1.5 bg-gray-300 rounded-full animate-bounce [animation-delay:-.3s]"></div>
-                    <div className="w-1.5 h-1.5 bg-gray-300 rounded-full animate-bounce [animation-delay:-.5s]"></div>
+                <div className="flex gap-2 items-center text-gray-400 font-bold uppercase text-[10px] tracking-widest ml-12">
+                   <div className="flex gap-1">
+                        <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce"></div>
+                        <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce [animation-delay:-.3s]"></div>
+                        <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce [animation-delay:-.5s]"></div>
+                    </div>
+                    Auditing Response
                 </div>
-                Recruiter is auditing...
-              </div>
             )}
           </div>
 
-          <div className="p-4 border-t bg-white">
+          <div className="p-6 border-t bg-white">
             {!finished ? (
-              <div className="flex gap-3">
-                <input className="flex-1 border-2 border-gray-100 p-3 rounded-xl focus:border-blue-500 outline-none transition-all shadow-inner" type="text" value={input} placeholder="Type your answer here..." onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && sendAnswer()} disabled={isLoading} />
-                <button onClick={sendAnswer} disabled={isLoading} className="bg-blue-600 text-white px-8 rounded-xl font-bold hover:bg-blue-700 active:scale-95 disabled:bg-blue-300 transition-all">Send</button>
+              <div className="flex gap-4 max-w-4xl mx-auto">
+                <input 
+                  className="flex-1 border-2 border-gray-100 p-4 rounded-2xl focus:border-blue-500 outline-none transition-all shadow-sm text-gray-800" 
+                  type="text" 
+                  value={input} 
+                  placeholder="Type your answer..." 
+                  onChange={(e) => setInput(e.target.value)} 
+                  onKeyDown={(e) => e.key === "Enter" && sendAnswer()} 
+                  disabled={isLoading} 
+                />
+                <button onClick={sendAnswer} disabled={isLoading || !input.trim()} className="bg-gray-900 text-white px-10 rounded-2xl font-bold hover:bg-black shadow-lg transition-all active:scale-95">Send</button>
               </div>
             ) : (
-              <div className="py-4 text-center space-y-3">
-                <p className="text-xl font-bold text-emerald-600 italic">"Audit finalized. Review your report above."</p>
-                <button onClick={() => window.location.reload()} className="text-blue-600 font-bold hover:underline underline-offset-4">Restart Session</button>
+              <div className="py-6 text-center space-y-4">
+                <p className="text-2xl font-black text-emerald-600 italic tracking-tight">"Audit finalized. Report generated."</p>
+                <button onClick={() => window.location.reload()} className="text-gray-900 font-bold border-b-2 border-gray-900 hover:text-gray-600 hover:border-gray-400 transition-all">Start New Audit</button>
               </div>
             )}
           </div>
