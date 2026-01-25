@@ -1,0 +1,18 @@
+# --- Web Server & API ---
+fastapi==0.115.0
+uvicorn==0.30.6
+python-multipart==0.0.9
+pydantic==2.9.2
+
+# --- AI & LangChain Ecosystem ---
+langchain==0.3.0
+langchain-core==0.3.0
+langgraph==0.2.20
+langchain-google-genai==2.0.0
+python-dotenv==1.0.1
+
+# --- Document Processing ---
+pypdf==5.0.1
+
+# --- Utilities ---
+typing-extensions==4.12.2

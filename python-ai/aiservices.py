@@ -1,10 +1,9 @@
 import os
-import json
-from typing import List, Optional
 from dotenv import load_dotenv
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, END
-from langchain_ollama import ChatOllama
+# 🚩 CHANGE: Import Gemini instead of Ollama
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from models import Feedback, Summary, InterviewState
 
@@ -32,7 +31,11 @@ STRICT SCORING RUBRIC:
 - Missing resume = Resume Score 0.
 """
 
-llm_text = ChatOllama(model="llama3", temperature=0.4) 
+llm_text = ChatGoogleGenerativeAI(
+    model="models/gemini-2.5-flash", # Use '-latest' for stability
+    temperature=0.4,
+    google_api_key=os.getenv("GOOGLE_API_KEY"),
+)
 llm_feedback = llm_text.with_structured_output(Feedback)
 llm_summary = llm_text.with_structured_output(Summary)
 memory= MemorySaver()
