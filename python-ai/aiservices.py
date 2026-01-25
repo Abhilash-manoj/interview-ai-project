@@ -199,13 +199,13 @@ def should_continue(state: InterviewState) -> str:
 continue_builder = StateGraph(InterviewState)
 continue_builder.add_node("evaluate_answer", evaluate_answer)
 continue_builder.add_node("generate_next_question", generate_next_question)
-continue_builder.add_node("summary", summary_node)
+continue_builder.add_node("generate_summary", summary_node)
 continue_builder.add_edge("evaluate_answer", "generate_next_question")
-continue_builder.add_edge("summary", END)
+continue_builder.add_edge("generate_summary", END)
 continue_builder.add_conditional_edges(
     "generate_next_question",
     should_continue,
-    {"continue_interview": END, "end_interview": "summary"}
+    {"continue_interview": END, "end_interview": "generate_summary"}
 )
 continue_builder.set_entry_point("evaluate_answer")
 continue_graph = continue_builder.compile(checkpointer=memory)
