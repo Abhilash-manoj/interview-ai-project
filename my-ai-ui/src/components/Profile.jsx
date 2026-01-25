@@ -11,11 +11,12 @@ export default function UserProfile() {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedReport, setSelectedReport] = useState(null); // 🚩 Added to track the active report
   const userName = localStorage.getItem("userName") || "Candidate";
+  const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
   useEffect(() => {
     const fetchHistory = async () => {
       try {
-        const res = await fetch(`http://localhost:5000/api/interview/user-history?name=${userName}`, {
+        const res = await fetch(`${API_BASE_URL}/api/interview/user-history?name=${userName}`, {
           headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
         });
         const data = await res.json();

@@ -24,6 +24,7 @@ export default function InterviewChat() {
   const [userName, setUserName] = useState("Candidate");
 
   const chatRef = useRef(null);
+  const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
   // --- Security: Session Check ---
   useEffect(() => {
@@ -39,7 +40,7 @@ export default function InterviewChat() {
       if (savedName) setUserName(savedName);
 
       try {
-        const res = await fetch("http://localhost:5000/api/auth/me", {
+        const res = await fetch(`${API_BASE_URL}/api/auth/me`, {
           headers: { Authorization: `Bearer ${token}` }
         });
 
@@ -95,7 +96,7 @@ export default function InterviewChat() {
       formData.append("max_questions", maxQuestions);
       if (resumeFile) formData.append("resume", resumeFile);
 
-      const res = await fetch("http://localhost:5000/api/interview/start", {
+      const res = await fetch(`${API_BASE_URL}/api/interview/start`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
@@ -123,7 +124,7 @@ export default function InterviewChat() {
     setIsLoading(true);
 
     try {
-      const res = await fetch("http://localhost:5000/api/interview/answer", {
+      const res = await fetch(`${API_BASE_URL}/api/interview/answer`, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
