@@ -1,46 +1,60 @@
-from pydantic import BaseModel
-from typing import List, TypedDict, Annotated, Optional
+from pydantic import BaseModel, Field
+from typing import List, TypedDict, Optional
 
-# --- 1. State Definition (Using TypedDict for clarity) ---
-# ⚠️ We've updated the types for feedback and summary to be structured objects
+# --- 1. Structured Output Models ---
+# These are used by the LLM to provide structured JSON
+from pydantic import BaseModel, Field
+from typing import List, Optional
+
 class Feedback(BaseModel):
-    strengths: List[str]
-    areas_for_improvement: List[str]
+    # Purely conversational/technical assessment without a numeric score
+    assessment: str = Field(description="A blunt paragraph assessing the quality of the specific answer.")
 
-class AnswerResponse(BaseModel):
-    session_id: str
-    name: str | None = None
-    current_question: str | None = None
-    feedback: Optional[Feedback] = None
-    summary: Optional[Feedback] = None
+class Summary(BaseModel):
+    overall_performance: str = Field(description="A brutal audit of the entire session.")
+    # Final consolidated scores
+    interview_score: int = Field(description="Final interview score (0-5) based on all answers.", ge=0, le=5)
+    resume_score: int = Field(description="Final resume score (0-5). Must be 0 if no resume was provided.", ge=0, le=5)
+    
+    interview_coaching: str = Field(description="Blunt, actionable tips for interview improvement.")
+    resume_coaching: str = Field(description="Blunt, actionable tips for resume improvement.")
+    hiring_verdict: str = Field(description="Final decision: HIRED, WAITLISTED, or REJECTED.")
+
+# --- 2. LangGraph State Definition ---
+# This is the "internal memory" of your AI. 
+# We added 'resume_text' so the nodes can access the extracted data.
+class InterviewState(TypedDict):
+    name: str
+    interview_type: str
+    max_questions: int
     question_count: int
+    current_question: str
+    latest_answer: str
+    questions: List[str] # ✅ Added to track what was asked
+    answers: List[str]
+    feedback: List[Feedback]
+    resume_text: Optional[str]
+    summary: Optional[Summary]
 
-
-# Assume your models.py and aiservices.py are in the same directory
-# 🔧 1. Define Pydantic models directly here for clarity
+# --- 3. API Request/Response Models ---
+# Used for FastAPI endpoint validation
 class StartInterviewRequest(BaseModel):
     name: str
     interview_type: str
-    max_questions: int = 3 # 🔧 Add max_questions to the request
+    max_questions: int = 3
 
 class StartInterviewResponse(BaseModel):
     session_id: str
     name: str
     current_question: str
 
-# ⚠️ Updated Pydantic models to match the new structured output
-class Feedback(BaseModel):
-    strengths: List[str]
-    areas_for_improvement: List[str]
-
-class AnswerResponse(BaseModel):
-    session_id: str
-    name: str | None = None
-    current_question: str | None = None
-    feedback: Optional[Feedback] = None
-    summary: Optional[Feedback] = None
-    question_count: int
-
 class AnswerRequest(BaseModel):
     session_id: str
     latest_answer: str
+
+class AnswerResponse(BaseModel):
+    session_id: str
+    current_question: Optional[str] = None
+    feedback: Optional[Feedback] = None
+    summary: Optional[Summary] = None # 💡 Now correctly uses the Summary model
+    question_count: int

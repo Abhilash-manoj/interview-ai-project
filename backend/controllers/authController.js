@@ -3,7 +3,7 @@ import User from '../models/User.js';
 import jwt from 'jsonwebtoken';
 
 const signToken = (userId) =>
-    jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: "1h" });
+    jwt.sign({ id: userId }, process.env.JWT_PUBLIC_KEY, { expiresIn: "2h" });
 
 export const signup = async (req, res, next) => {
     try{
@@ -47,11 +47,20 @@ export const signin = async (req, res, next) => {
 };
 
 export const me = async (req, res, next) => {
-    try{
-        const user = await User.findById(req.user.id).select("_id email name createdAt");
-        res.json({ user });
+    try {
+        // If requireAuth failed or decoded wrongly, req.user might be null
+        if (!req.user || !req.user.id) {
+            return res.status(401).json({ message: "Not authorized, no user data" });
+        }
 
+        const user = await User.findById(req.user.id).select("_id email name createdAt");
+        
+        if (!user) {
+            return res.status(404).json({ user: null, message: "User not found" });
+        }
+
+        res.json({ user });
     } catch (err) {
-        next (err);
+        next(err);
     }
 };

@@ -1,111 +1,90 @@
 import uuid
-from fastapi import FastAPI, HTTPException
+import io
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
-from models import Feedback
-from typing import List, TypedDict, Annotated, Optional
+from typing import List, Optional
 
-# Assume your models.py and aiservices.py are in the same directory
-# 🔧 1. Define Pydantic models directly here for clarity
-class StartInterviewRequest(BaseModel):
-    name: str
-    interview_type: str
-    max_questions: int = 3 # 🔧 Add max_questions to the request
+# Import your models and graphs
+from models import Feedback, Summary, StartInterviewResponse, AnswerResponse, AnswerRequest
+from aiservices import start_graph, continue_graph # Import both graphs and memory
+from pypdf import PdfReader
 
-class StartInterviewResponse(BaseModel):
-    session_id: str
-    name: str
-    current_question: str
-
-# ⚠️ Updated Pydantic models to match the new structured output
-
-class AnswerResponse(BaseModel):
-    session_id: str
-    name: str | None = None
-    current_question: str | None = None
-    feedback: Optional[Feedback] = None
-    summary: Optional[Feedback] = None
-    question_count: int
-
-class AnswerRequest(BaseModel):
-    session_id: str
-    latest_answer: str
-
-# 🔧 2. Import the compiled graph objects from your services file
-from aiservices import start_graph, continue_graph
-
-app = FastAPI(
-    title="Mock Interview AI Agent",
-    description="API for conducting a mock interview with a LangGraph-powered agent."
-)
-
-# In-memory session storage (for demonstration purposes)
-sessions = {}
+app = FastAPI(title="Mock Interview AI")
 
 # -------------------------------------------------------------
-# 🔧 3. Update the /start endpoint
+# 🚀 Start Endpoint (Uses start_graph)
 # -------------------------------------------------------------
 @app.post("/start", response_model=StartInterviewResponse)
-def start(req: StartInterviewRequest):
-    """Initializes a new interview session."""
-    # Create the initial state from the request
+async def start(
+    name: str = Form(...), 
+    interview_type: str = Form(...), 
+    max_questions: int = Form(3),
+    resume: Optional[UploadFile] = File(None)
+):
+    extracted_text = ""
+    if resume:
+        try:
+            content = await resume.read()
+            pdf_reader = PdfReader(io.BytesIO(content))
+            extracted_text = " ".join([page.extract_text() for page in pdf_reader.pages])
+            print(f"✅ Resume processed: {len(extracted_text)} chars.")
+        except Exception as e:
+            print(f"⚠️ PDF Error: {e}")
+
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+
     initial_state = {
-        "name": req.name,
-        "interview_type": req.interview_type,
-        "max_questions": req.max_questions
+        "name": name,
+        "interview_type": interview_type,
+        "max_questions": max_questions,
+        "question_count": 0,
+        "resume_text": extracted_text,
+        "answers": [],
+        "feedback": []
     }
 
-    # 🔧 Use the new start_graph to initialize the state and get the first question
-    final_state = start_graph.invoke(initial_state)
+    # Use the START graph for the first call
+    final_state = start_graph.invoke(initial_state, config)
 
-    # Generate a unique session ID and store the state
-    session_id = str(uuid.uuid4())
-    sessions[session_id] = final_state
-    print(f"✅ Session started: {session_id} for user {req.name}")
-
-    response = StartInterviewResponse(
-        session_id=session_id,
-        name=req.name,
+    return StartInterviewResponse(
+        session_id=thread_id,
+        name=name,
         current_question=final_state["current_question"]
     )
-    print("🔧 Returning StartInterviewResponse:", response.dict())
-    return response
 
 # -------------------------------------------------------------
-# 🔧 4. Update the /answer endpoint
+# 🚀 Answer Endpoint (Uses continue_graph)
 # -------------------------------------------------------------
 @app.post("/answer", response_model=AnswerResponse)
-def answer(req: AnswerRequest):
-    """Processes a user's answer and gets the next question or summary."""
-    # Retrieve the current state for the session
-    current_state = sessions.get(req.session_id)
-    if not current_state:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def answer(req: AnswerRequest):
+    """
+    Resumes the session using continue_graph.
+    This graph runs: evaluate_answer -> generate_next_question -> should_continue
+    """
+    config = {"configurable": {"thread_id": req.session_id}}
 
-    # Update the state with the user's latest answer
-    current_state["latest_answer"] = req.latest_answer
+    try:
+        # We invoke the continue_graph with the new answer.
+        # LangGraph retrieves the previous state automatically via thread_id.
+        updated_state = continue_graph.invoke(
+            {"latest_answer": req.latest_answer}, 
+            config
+        )
+    except Exception as e:
+        print(f"❌ Graph Error: {e}")
+        raise HTTPException(status_code=500, detail="AI failed to process answer.")
 
-    # 🔧 Use the new continue_graph for the main conversational loop
-    new_state = continue_graph.invoke(current_state)
-
-    # Save the updated state back into the session storage
-    sessions[req.session_id] = new_state
-    print(f"🔄 Session updated: {req.session_id}")
-
-    # ⚠️ Now we directly access the structured feedback and summary objects
-    latest_feedback = new_state["feedback"][-1] if new_state.get("feedback") else None
-    final_summary = new_state.get("summary")
-
-    response = AnswerResponse(
+    # In your new graph:
+    # If the interview continues, feedback and current_question are updated.
+    # If the interview ends, summary is populated.
+    
+    latest_feedback = updated_state["feedback"][-1] if updated_state.get("feedback") else None
+    
+    return AnswerResponse(
         session_id=req.session_id,
-        name=new_state.get("name"),
-        current_question=new_state.get("current_question"),
+        current_question=updated_state.get("current_question"),
         feedback=latest_feedback, 
-        summary=final_summary,
-        question_count=new_state.get("question_count", 0)
+        summary=updated_state.get("summary"),
+        question_count=updated_state.get("question_count", 0)
     )
-    print("🔧 Returning AnswerResponse:", response.dict())
-    return response
-
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to the Mock Interview AI Agent API"}

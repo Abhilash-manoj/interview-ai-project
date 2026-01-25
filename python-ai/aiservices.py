@@ -1,166 +1,189 @@
 import os
 import json
-from typing import List, TypedDict, Annotated, Optional
-from models import Feedback
-# ✨ NEW: Import BaseModel from Pydantic for structured output
-from pydantic import BaseModel
+from typing import List, Optional
+from dotenv import load_dotenv
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, END
 from langchain_ollama import ChatOllama
-from langchain_core.messages import SystemMessage, HumanMessage
-from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage, SystemMessage
+from models import Feedback, Summary, InterviewState
 
-# --- Setup ---
 load_dotenv()
-SYSTEM_PROMPT = "You are a helpful and insightful mock interviewer. Your goal is to ask relevant follow-up questions and provide constructive feedback. Keep your questions and feedback concise."
 
-# 🔄 UPDATED: We will now have two LLM instances.
-# 1. A standard LLM for generating plain text questions.
-llm_text = ChatOllama(model="llama3", system=SYSTEM_PROMPT)
+# --- 1. Senior Recruiter Persona ---
+# Instructions explicitly handle the friendliness and resume-mentioning issues
+# aiservices.py
 
-# 2. A specialized LLM that is FORCED to output JSON for feedback and summaries.
-#    We will define the structure it must follow using a Pydantic model below.
+# aiservices.py
 
+SYSTEM_PROMPT = """
+You are 'Alex', a Senior Technical Recruiter at a Tier-1 tech firm.
+Your tone is clinical, demanding, and blunt.
+You are a gatekeeper, not a coach.
 
-# --- ✨ NEW: Define a Pydantic model for structured feedback ---
-# This is more robust than a TypedDict for forcing model output structure.
+You must judge ONLY based on provided evidence.
+You must NOT assume competence.
+You must NOT inflate scores.
 
+STRICT SCORING RUBRIC:
+- One-word answers cap interview score at 1.
+- Vague answers cap interview score at 2.
+- Resume claims not demonstrated verbally must be penalized.
+- Missing resume = Resume Score 0.
+"""
 
-# 🔄 UPDATED: The specialized JSON-output LLM chain
-llm_json = llm_text.with_structured_output(Feedback)
+llm_text = ChatOllama(model="llama3", temperature=0.4) 
+llm_feedback = llm_text.with_structured_output(Feedback)
+llm_summary = llm_text.with_structured_output(Summary)
+memory= MemorySaver()
 
+# --- 2. Debugging Helper ---
+def log_ai_action(node_name: str, output: any, count: int = 0):
+    """Consoles the specific AI output and current question count for debugging."""
+    print(f"\n--- 🤖 AI DEBUG: [{node_name}] | Question Count: {count} ---") # ✅ Added count here
+    if isinstance(output, str):
+        print(f"Text: {output}")
+    else:
+        # For structured Feedback or Summary objects
+        try:
+            print(f"JSON: {output.model_dump_json(indent=2)}")
+        except:
+            print(f"Output: {output}")
+    print("----------------------------------\n")
 
-# --- State Definition (Updated to use the Pydantic model) ---
-class InterviewState(TypedDict):
-    interview_type: str
-    max_questions: int
-    question_count: int
-    current_question: str
-    latest_answer: str
-    answers: List[str]
-    # 🔄 UPDATED: The feedback list now expects dictionary-like Pydantic objects
-    feedback: List[Feedback]
-    summary: Optional[Feedback]
+# --- 3. Logic Nodes ---
 
-
-# --- Debugging Helper (No changes needed here) ---
-def debug_return_values(node_name: str, state: dict):
-    """Prints a formatted view of the state being returned from a node."""
-    print(f"\n<<< RETURNING FROM: {node_name} >>>")
-    state_to_print = state.copy()
-    if "answers" in state_to_print and state_to_print["answers"]:
-        state_to_print["answers"] = f"[... {len(state_to_print['answers'])} answer(s) total. Last: '{state_to_print['answers'][-1][:50]}...']"
-    if "feedback" in state_to_print and state_to_print["feedback"]:
-        # Pydantic objects can be complex, so we convert them to dicts for clean printing
-        feedback_list = [dict(item) for item in state_to_print['feedback']]
-        state_to_print["feedback"] = f"[... {len(feedback_list)} feedback item(s) total. Last: '{feedback_list[-1]}...']"
-    if "summary" in state_to_print and state_to_print["summary"]:
-         state_to_print["summary"] = dict(state_to_print["summary"])
-
-    print(json.dumps(state_to_print, indent=2))
-    print("<<< -------------------- >>>")
-
-
-# --- Graph Nodes ---
-def start_interview(state: InterviewState) -> InterviewState:
-    """Node to set up the first question of the interview."""
+def start_interview(state: InterviewState) -> dict:
     print("\n---NODE: START_INTERVIEW---")
-    type_map = {
-        "HR": "Tell me about yourself.",
-        "Technical": "Can you explain a technical project you've worked on in detail?",
-        "Behavioral": "Describe a time you faced a significant conflict at work or college and how you resolved it."
-    }
-    question = type_map.get(state["interview_type"], "Tell me about yourself.")
+    context = f"Candidate Resume: {state.get('resume_text', 'Not provided')}"
     
-    new_state = {
-        **state,
-        "current_question": question,
-        "question_count": 1,
-        "answers": [],
-        "feedback": [],
-        "summary": None,
-    }
-    debug_return_values("start_interview", new_state)
-    return new_state
-
-def evaluate_answer(state: InterviewState) -> InterviewState:
-    """Node to evaluate the user's answer and provide structured feedback."""
-    print("\n---NODE: EVALUATE_ANSWER---")
-    current_answers = state.get("answers", [])
-    current_answers.append(state["latest_answer"])
-
-    # 🔄 UPDATED: Simplified prompt. The structure is handled by the model itself.
-    prompt_content = (
-        f"You are an expert interviewer. Provide concise, constructive feedback on the following answer.\n\n"
-        f"Question: {state['current_question']}\n\n"
-        f"Answer: {state['latest_answer']}"
-    )
-    
-    # 🔄 UPDATED: Use the JSON-enabled LLM and no more manual parsing!
-    # The 'response' will be a dictionary-like object, not a string.
-    try:
-        feedback_obj = llm_json.invoke([HumanMessage(content=prompt_content)])
-    except Exception as e:
-        # Fallback in case of a more serious LLM error
-        print(f"❌ ERROR: Failed to get structured feedback from AI. Error: {e}")
-        feedback_obj = Feedback(strengths=["Failed to get feedback due to an AI error."], areas_for_improvement=[])
-
-    current_feedback = state.get("feedback", [])
-    current_feedback.append(feedback_obj)
-    
-    new_state = {
-        **state,
-        "answers": current_answers,
-        "feedback": current_feedback,
-    }
-    debug_return_values("evaluate_answer", new_state)
-    return new_state
-
-def generate_next_question(state: InterviewState) -> InterviewState:
-    """Node to generate the next interview question."""
-    print("\n---NODE: GENERATE_NEXT_QUESTION---")
     prompt = (
-        f"Based on the candidate's previous answer, ask a single, concise, and relevant follow-up {state['interview_type']} question.\n\n"
-        f"Previous Answer: {state['latest_answer']}"
+        f"{SYSTEM_PROMPT}\n"
+        f"Context: {context}\n"
+        f"Task: Open the {state['interview_type']} interview with a direct opening question."
     )
-    # 🔄 UPDATED: Use the standard text LLM for this node
+    
     response = llm_text.invoke([HumanMessage(content=prompt)])
+    ai_content = response.content.strip()
+    log_ai_action("START_INTERVIEW", ai_content, count=0)
     
-    new_state = {
-        **state,
-        "current_question": response.content.strip(),
-        "question_count": state["question_count"] + 1,
+    return {
+        "current_question": ai_content,
+        "question_count": 0, # Initialize count
+        "answers": [],
+        "feedback": []
+        
     }
-    debug_return_values("generate_next_question", new_state)
-    return new_state
 
-def summary_node(state: InterviewState) -> InterviewState:
-    """Node to generate a final summary in a structured format."""
-    print("\n---NODE: SUMMARY---")
+def evaluate_answer(state: InterviewState) -> dict:
+    print("\n---NODE: EVALUATE_ANSWER---")
+    new_count = (state.get("question_count") or 0) + 1
     
-    transcript = ""
-    for i, (ans, fb) in enumerate(zip(state['answers'], state['feedback'])):
-        # fb is now a Pydantic object, so we access attributes directly
-        feedback_str = f"Strengths: {', '.join(fb.strengths)}\nAreas for Improvement: {', '.join(fb.areas_for_improvement)}"
-        transcript += f"Answer {i+1}: {ans}\nFeedback {i+1}: {feedback_str}\n\n"
-
-    # 🔄 UPDATED: Simplified prompt
+    # 📄 Reference the resume text from the state
+    resume_context = state.get("resume_text", "NO RESUME PROVIDED").strip()
+    
     prompt_content = (
-        f"Provide a final summary for this mock interview. Include two things the candidate did well, and one key area for improvement based on the transcript.\n\n"
-        f"Transcript:\n{transcript}"
+        f"CRITICAL AUDIT of the latest response:\n"
+        f"RESUME CONTEXT: {resume_context[:2000]}\n" # Injecting resume for comparison
+        f"Question Asked: {state['current_question']}\n"
+        f"Candidate Answer: '{state['latest_answer']}'\n\n"
+        "TASK: Compare the candidate's answer against their provided resume. "
+        "If they are vague about a skill they claim to have, call them out. "
+        "Provide a blunt, clinical assessment in one paragraph. "
+        "Focus strictly on whether the answer demonstrates the depth claimed in their resume."
+    )
+    
+    try:
+        feedback_obj = llm_feedback.invoke([HumanMessage(content=prompt_content)])
+        log_ai_action("EVALUATE_ANSWER", feedback_obj, count=new_count)
+    except Exception:
+        feedback_obj = Feedback(assessment="The candidate failed to provide technical depth relative to their resume.")
+
+    return {
+        "questions": state.get("questions", []) + [state["current_question"]],
+        "answers": state["answers"] + [state["latest_answer"]],
+        "feedback": state["feedback"] + [feedback_obj],
+        "question_count": new_count
+    }
+
+def generate_next_question(state: InterviewState) -> dict:
+    print("\n---NODE: GENERATE_NEXT_QUESTION---")
+    
+    resume_context = state.get("resume_text", "No resume provided.")
+    
+    prompt = (
+        f"{SYSTEM_PROMPT}\n"
+        f"RESUME CONTEXT: {resume_context}\n"
+        f"Candidate's Last Answer: '{state['latest_answer']}'\n"
+        "TASK: Acknowledge the answer briefly. Then, pick a SPECIFIC skill or project "
+        "from their resume that they haven't explained well yet and ask a challenging follow-up."
+    )
+    
+    response = llm_text.invoke([HumanMessage(content=prompt)])
+    ai_content = response.content.strip()
+    log_ai_action("GENERATE_NEXT_QUESTION", ai_content, count=state.get("question_count", 0))
+    
+    return {"current_question": ai_content}
+def summary_node(state: InterviewState) -> dict:
+    print("\n---NODE: SUMMARY---")
+
+    resume_text = state.get("resume_text", "").strip()
+    has_resume = len(resume_text) > 10
+
+    # FULL TRANSCRIPT (NO DROPPED QUESTIONS)
+    transcript = ""
+    for i in range(len(state["answers"])):
+        transcript += (
+            f"Q{i+1}: {state['questions'][i]}\n"
+            f"A{i+1}: {state['answers'][i]}\n\n"
+        )
+
+    # HARD LOGIC: detect one-word interviews
+    one_word_answers = 0
+    for a in state["answers"]:
+        if len(a.strip().split()) <= 2:
+            one_word_answers += 1
+
+    # 🔥 HARD FAIL — NO LLM ALLOWED TO OVERRIDE
+    if one_word_answers >= len(state["answers"]) / 2:
+        summary_obj = Summary(
+            overall_performance="Candidate provided mostly one-word or evasive answers.",
+            interview_score=0,
+            resume_score=0 if not has_resume else 2,
+            interview_coaching="You failed to demonstrate any technical depth.",
+            resume_coaching="Resume claims were not validated verbally.",
+            hiring_verdict="REJECTED"
+        )
+        log_ai_action("FINAL_SUMMARY", summary_obj, count=state["question_count"])
+        return {"summary": summary_obj}
+
+    prompt_content = (
+        f"CANDIDATE RESUME:\n{resume_text}\n\n"
+        f"INTERVIEW TRANSCRIPT:\n{transcript}\n"
+        "MANDATORY ANALYSIS:\n"
+        "1. Classify each answer as ONE-WORD, VAGUE, ADEQUATE, or STRONG.\n"
+        "2. Cite transcript evidence for every score.\n"
+        "3. Penalize resume claims not demonstrated verbally.\n\n"
+        "SCORING RULES:\n"
+        "- One-word answers cap score at 1.\n"
+        "- No demonstrated depth caps score at 2.\n"
+        "- Missing resume = Resume Score 0.\n\n"
+        "Be blunt. Be exact."
     )
 
-    # 🔄 UPDATED: Use the JSON-enabled LLM for the summary
-    try:
-        summary_obj = llm_json.invoke([HumanMessage(content=prompt_content)])
-    except Exception as e:
-        print(f"❌ ERROR: Failed to get structured summary from AI. Error: {e}")
-        summary_obj = Feedback(strengths=["Failed to parse summary from AI due to an error."], areas_for_improvement=[])
-        
-    new_state = {**state, "summary": summary_obj}
-    debug_return_values("summary_node", new_state)
-    return new_state
+    summary_obj = llm_summary.invoke([
+        SystemMessage(content=SYSTEM_PROMPT),
+        HumanMessage(content=prompt_content)
+    ])
 
-# --- Conditional Logic & Graph Definition (No changes needed here) ---
+    if not has_resume:
+        summary_obj.resume_score = 0
+
+    log_ai_action("FINAL_SUMMARY", summary_obj, count=state["question_count"])
+
+    return {"summary": summary_obj}
+
+# --- 4. Logic & Graph Building ---
 def should_continue(state: InterviewState) -> str:
     print("\n---CONDITIONAL: SHOULD_CONTINUE---")
     if state["question_count"] >= state.get("max_questions", 3):
@@ -182,10 +205,10 @@ continue_builder.add_conditional_edges(
     {"continue_interview": END, "end_interview": "summary"}
 )
 continue_builder.set_entry_point("evaluate_answer")
-continue_graph = continue_builder.compile()
+continue_graph = continue_builder.compile(checkpointer=memory)
 
 start_builder = StateGraph(InterviewState)
 start_builder.add_node("start_interview", start_interview)
 start_builder.set_entry_point("start_interview")
 start_builder.add_edge("start_interview", END)
-start_graph = start_builder.compile()
+start_graph = start_builder.compile(checkpointer=memory)

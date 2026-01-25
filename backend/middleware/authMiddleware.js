@@ -1,17 +1,20 @@
 import jwt from "jsonwebtoken";
 
-// Minimal example; adapt to your key/algorithms
 export const requireAuth = (req, res, next) => {
   try {
-    const auth = req.headers.authorization || "";
-    const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
 
-    // For RS256 use public key; for HS256 use shared secret
+    // ✅ FIX: Check if token is actually a string and not "null"
+    if (!token || token === "null" || token === "undefined") {
+      return res.status(401).json({ error: "No valid token provided" });
+    }
+
     const decoded = jwt.verify(token, process.env.JWT_PUBLIC_KEY);
-    req.user = { id: decoded.sub };
-    return next();
-  } catch (e) {
+    req.user = { id: decoded.id };
+    next();
+  } catch (err) {
+    console.error("🔒 Auth Middleware Error:", err.message);
     return res.status(401).json({ error: "Unauthorized" });
   }
 };

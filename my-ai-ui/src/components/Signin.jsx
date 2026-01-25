@@ -22,7 +22,11 @@ export default function Signin() {
 
       if (res.ok) {
         setMessage("✅ Login successful!");
+        
+        // 🚀 THE CHANGE: Store both the token and the user's registered name
         localStorage.setItem("token", data.token);
+        localStorage.setItem("userName", data.user.name);
+
         setTimeout(() => navigate("/interviewChat"), 1500);
       } else {
         setMessage("❌ " + (data.message || "Login failed"));
@@ -43,6 +47,7 @@ export default function Signin() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            required
           />
           <input
             type="password"
@@ -50,6 +55,7 @@ export default function Signin() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            required
           />
           <button
             type="submit"
@@ -58,7 +64,19 @@ export default function Signin() {
             Sign In
           </button>
         </form>
-        {message && <p className="mt-4 text-center">{message}</p>}
+        {message && <p className="mt-4 text-center text-sm font-medium">{message}</p>}
+        
+        <div className="mt-6 text-center text-sm">
+          <p className="text-gray-600">
+            Don't have an account?{" "}
+            <button 
+              onClick={() => navigate("/signup")} 
+              className="text-blue-500 hover:underline font-bold"
+            >
+              Sign Up
+            </button>
+          </p>
+        </div>
       </div>
     </div>
   );
