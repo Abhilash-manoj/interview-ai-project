@@ -6,9 +6,12 @@ node_modules/
 __pycache__/
 *.pyc
 
-# Env
+# Environment variables
 .env
 .env.*
+backend/.env
+my-ai-ui/.env
+python-ai/.env
 
 # Logs
 npm-debug.log*
