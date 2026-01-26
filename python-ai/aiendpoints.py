@@ -1,6 +1,7 @@
 import uuid
 import io
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
 
@@ -10,6 +11,19 @@ from aiservices import start_graph, continue_graph # Import both graphs and memo
 from pypdf import PdfReader
 
 app = FastAPI(title="Mock Interview AI")
+
+
+@app.get("/health")
+async def health_check():
+    """
+    Simple endpoint for pinger services to keep the server awake 
+    and for Render to monitor service health.
+    """
+    return JSONResponse(
+        content={"status": "online", "service": "Audit.AI Engine"}, 
+        status_code=200
+    )
+
 
 # -------------------------------------------------------------
 # 🚀 Start Endpoint (Uses start_graph)
