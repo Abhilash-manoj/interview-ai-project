@@ -2,7 +2,8 @@ import os
 from dotenv import load_dotenv
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, END
-# 🚩 CHANGE: Import Gemini instead of Ollama
+from langgraph.types import RetryPolicy # 🆕 Added for fault tolerance
+from google.api_core import exceptions # 🆕 Added to catch specific API errors
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from models import Feedback, Summary, InterviewState
@@ -35,7 +36,17 @@ llm_text = ChatGoogleGenerativeAI(
     model="models/gemini-2.5-flash", # Use '-latest' for stability
     temperature=0.4,
     google_api_key=os.getenv("GOOGLE_API_KEY"),
+    max_retries=3,  # 🆕 Retry up to 3 times on failure
 )
+
+ai_retry_policy = RetryPolicy(
+    max_attempts=3,
+    initial_interval=2.0,
+    backoff_factor=2.0,
+    retry_on=exceptions.ResourceExhausted # Specifically retries on 429 Rate Limits
+)
+
+
 llm_feedback = llm_text.with_structured_output(Feedback)
 llm_summary = llm_text.with_structured_output(Summary)
 memory= MemorySaver()
@@ -197,9 +208,9 @@ def should_continue(state: InterviewState) -> str:
         return "continue_interview"
 
 continue_builder = StateGraph(InterviewState)
-continue_builder.add_node("evaluate_answer", evaluate_answer)
-continue_builder.add_node("generate_next_question", generate_next_question)
-continue_builder.add_node("generate_summary", summary_node)
+continue_builder.add_node("evaluate_answer", evaluate_answer, retry_policy=ai_retry_policy) # 🆕 Added retry policy
+continue_builder.add_node("generate_next_question", generate_next_question, retry_policy=ai_retry_policy) # 🆕 Added retry policy
+continue_builder.add_node("generate_summary", summary_node, retry_policy=ai_retry_policy) # 🆕 Added retry policy
 continue_builder.add_edge("evaluate_answer", "generate_next_question")
 continue_builder.add_edge("generate_summary", END)
 continue_builder.add_conditional_edges(
@@ -211,7 +222,7 @@ continue_builder.set_entry_point("evaluate_answer")
 continue_graph = continue_builder.compile(checkpointer=memory)
 
 start_builder = StateGraph(InterviewState)
-start_builder.add_node("start_interview", start_interview)
+start_builder.add_node("start_interview", start_interview, retry_policy=ai_retry_policy) # 🆕 Added retry policy
 start_builder.set_entry_point("start_interview")
 start_builder.add_edge("start_interview", END)
 start_graph = start_builder.compile(checkpointer=memory)

@@ -1,6 +1,7 @@
+import logging
 import uuid
 import io
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
@@ -10,8 +11,26 @@ from models import Feedback, Summary, StartInterviewResponse, AnswerResponse, An
 from aiservices import start_graph, continue_graph # Import both graphs and memory
 from pypdf import PdfReader
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("audit-ai")
+
 app = FastAPI(title="Mock Interview AI")
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Global Error caught: {str(exc)}", exc_info=True) # Logs full traceback
+    
+    # Check if it's a known Rate Limit issue from Gemini
+    if "429" in str(exc):
+        return JSONResponse(
+            status_code=429,
+            content={"error": "RATE_LIMIT", "message": "AI is busy. Please wait 60 seconds."}
+        )
+        
+    return JSONResponse(
+        status_code=500,
+        content={"error": "INTERNAL_ERROR", "message": "The audit engine hit a snag. Please retry."}
+    )
 
 @app.get("/health")
 async def health_check():

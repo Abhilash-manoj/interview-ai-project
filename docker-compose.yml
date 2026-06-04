@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  # 1. MongoDB Service
+  mongo-db:
+    image: mongo:6.0
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  # 2. Python FastAPI AI Core
+  ai-service:
+    build:
+      context: ./python-ai
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./python-ai:/usr/src/ai-service
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - FASTAPI_PORT=8000
+      - ALLOWED_ORIGINS=http://localhost:5173
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY}
+      - MONGO_URL=mongodb://mongo-db:27017/interview_agent # Fixed internal string
+    depends_on:
+      - mongo-db
+
+  # 3. Node.js Express Controller
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/usr/src/backend
+      - /usr/src/backend/node_modules # Protective volume shield
+    environment:
+      - NODE_ENV=development
+      - PORT=5000
+      - JWT_SECRET=${JWT_SECRET}
+      - MONGO_URL=mongodb://mongo-db:27017/interview_agent # Fixed internal string
+      - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
+      - AI_SERVICE_URL=http://ai-service:8000                # Fixed target router name
+      - FRONTEND_ORIGIN=http://localhost:5173
+      - FASTAPI_INTERNAL_KEY=${FASTAPI_INTERNAL_KEY}
+    depends_on:
+      - mongo-db
+      - ai-service
+
+  # 4. React Frontend
+  frontend:
+    build:
+      context: ./my-ai-ui
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173" # Adjusted to match Vite default if applicable
+    volumes:
+      - ./my-ai-ui:/usr/src/frontend
+      - /usr/src/frontend/node_modules # Protective volume shield
+    environment:
+      - REACT_APP_BACKEND_URL=http://localhost:5000
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:
